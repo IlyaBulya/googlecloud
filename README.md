@@ -97,6 +97,21 @@ This script will:
 - Upload the file to GCS
 - Load the file into BigQuery
 
+## Test NHL API Extraction
+
+Before running the full pipeline, test the NHL API data extraction locally:
+
+```bash
+python test_extraction.py --date 2025-10-07
+```
+
+This will show you:
+- Number of games returned for that date
+- Sample game structure and fields
+- Whether the API is returning data
+
+Use a date during the NHL regular season (typically Oct–Apr) for realistic results.
+
 ## Run SQL Transformations
 
 Use the SQL files in the `sql/` directory to create the raw and analytics tables.
@@ -131,6 +146,14 @@ Looker Studio dashboard link: ADD_LINK_HERE
 - Depends on the availability of the public NHL API.
 - This is a batch refresh pipeline, not a real-time stream.
 - Data quality depends on the API response schema.
+
+## Troubleshooting
+
+**Q: Pipeline extracts 0 games**  
+A: The NHL API response structure uses `gameWeek` array with nested `games`. Ensure the pipeline is parsing the correct response format. The extraction code includes retry logic with exponential backoff for transient API failures.
+
+**Q: HTTP timeouts or 429 rate limit errors**  
+A: The `extract_nhl_data.py` includes exponential backoff retry logic (default 3 retries). Adjust `--http-timeout` and `--http-backoff` parameters or add sleep between requests via the `sleep_sec` parameter.
 
 ## Submission
 

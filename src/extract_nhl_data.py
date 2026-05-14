@@ -1,80 +1,127 @@
 import json
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 import requests
 
-from src.utils import date_range, ensure_directory, safe_get
+from src.utils import ensure_directory, safe_get
 
 BASE_URL = "https://api-web.nhle.com/v1"
 
 
-def fetch_json(url: str) -> dict:
-    try:
-        response = requests.get(url, timeout=20)
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as exc:
-        print(f"Warning: failed to fetch {url}: {exc}")
+def http_get_json_with_retry(url: str, timeout: int = 30, retries: int = 3, backoff_sec: float = 1.0) -> dict:
+    """Fetch JSON from URL with exponential backoff retry logic."""
+    last_err: Optional[Exception] = None
+    current_timeout = timeout
+
+    for attempt in range(1, retries + 1):
+        try:
+            r = requests.get(url, timeout=current_timeout)
+            if r.status_code == 200:
+                return r.json()
+            if r.status_code in (429,) or 500 <= r.status_code < 600:
+                last_err = RuntimeError(f"HTTP {r.status_code} url={url}")
+            else:
+                r.raise_for_status()
+        except (requests.RequestException, ValueError) as e:
+            last_err = e
+
+        if attempt < retries:
+            wait_time = backoff_sec * attempt
+            print(f"  Retry {attempt}/{retries} after {wait_time}s for {url}")
+            time.sleep(wait_time)
+            current_timeout = min(current_timeout * 2, 120)
+
+    if last_err:
+        print(f"Warning: failed to fetch {url}: {last_err}")
         return {}
+    return {}
 
 
-def parse_game(schedule_game: dict, score_game: dict | None, source_date: str, ingested_at: str) -> dict:
-    game_id = safe_get(schedule_game, "gamePk")
-    home_team = schedule_game.get("teams", {}).get("home", {}).get("team", {})
-    away_team = schedule_game.get("teams", {}).get("away", {}).get("team", {})
-    home_score = safe_get(score_game or {}, "teams", "home", "score", default=0)
-    away_score = safe_get(score_game or {}, "teams", "away", "score", default=0)
+def parse_game_from_schedule(game: dict, day_date: str, ingested_at: str) -> Optional[dict]:
+    """Parse a single game from /schedule/{date} response."""
+    game_id = game.get("id")
+    if game_id is None:
+        return None
+
+    home_team = game.get("homeTeam", {})
+    away_team = game.get("awayTeam", {})
+    score = game.get("score", {})
+    outcome = game.get("gameOutcome", {})
+
     return {
-        "game_id": game_id,
-        "game_date": source_date,
-        "season": safe_get(schedule_game, "season"),
-        "game_type": safe_get(schedule_game, "gameType"),
-        "venue": safe_get(schedule_game, "venue", "name"),
-        "home_team_abbrev": safe_get(home_team, "abbreviation"),
-        "away_team_abbrev": safe_get(away_team, "abbreviation"),
-        "home_team_name": safe_get(home_team, "name"),
-        "away_team_name": safe_get(away_team, "name"),
-        "home_score": home_score if isinstance(home_score, int) else int(home_score or 0),
-        "away_score": away_score if isinstance(away_score, int) else int(away_score or 0),
-        "game_state": safe_get(score_game or schedule_game, "status", "detailedState"),
-        "start_time_utc": safe_get(schedule_game, "gameDate"),
-        "source_date": source_date,
+        "game_id": int(game_id),
+        "game_date": day_date,
+        "season": game.get("season"),
+        "game_type": game.get("gameType"),
+        "venue": safe_get(game, "venue", "default"),
+        "home_team_abbrev": home_team.get("abbrev"),
+        "away_team_abbrev": away_team.get("abbrev"),
+        "home_team_name": home_team.get("name"),
+        "away_team_name": away_team.get("name"),
+        "home_score": score.get("home") if isinstance(score, dict) else 0,
+        "away_score": score.get("away") if isinstance(score, dict) else 0,
+        "game_state": game.get("gameState"),
+        "start_time_utc": game.get("startTimeUTC"),
+        "source_date": day_date,
         "ingested_at": ingested_at,
     }
 
 
-def extract_nhl_data(start_date: str, end_date: str, output_dir: str = "data/raw") -> tuple[str, int]:
+def extract_nhl_data(start_date: str, end_date: str, output_dir: str = "data/raw", sleep_sec: float = 0.1) -> tuple[str, int]:
+    """
+    Extract NHL game data from /schedule/{date} endpoint.
+    
+    Returns tuple of (local_file_path, row_count).
+    """
     ensure_directory(output_dir)
     extracted_records: list[dict] = []
     ingested_at = datetime.now(timezone.utc).isoformat()
 
-    for current_date in date_range(start_date, end_date):
-        print(f"Extracting NHL data for {current_date}")
-        schedule_response = fetch_json(f"{BASE_URL}/schedule/{current_date}")
-        score_response = fetch_json(f"{BASE_URL}/score/{current_date}")
+    # Convert string dates to datetime for range iteration
+    start_dt = datetime.fromisoformat(start_date).date()
+    end_dt = datetime.fromisoformat(end_date).date()
+    current_dt = start_dt
 
-        schedule_games = []
-        for date_block in schedule_response.get("dates", []):
-            schedule_games.extend(date_block.get("games", []))
+    while current_dt <= end_dt:
+        current_date_str = current_dt.isoformat()
+        print(f"Extracting NHL data for {current_date_str}")
 
-        score_games = {}
-        for date_block in score_response.get("dates", []):
-            for game in date_block.get("games", []):
-                game_pk = safe_get(game, "gamePk")
-                if game_pk is not None:
-                    score_games[game_pk] = game
+        schedule_url = f"{BASE_URL}/schedule/{current_date_str}"
+        schedule_response = http_get_json_with_retry(schedule_url)
 
-        if not schedule_games:
-            print(f"No games found for {current_date}. Continuing to next date.")
-            continue
+        # Parse gameWeek structure from schedule endpoint
+        game_count_today = 0
+        for day_block in schedule_response.get("gameWeek", []):
+            day_date = day_block.get("date")
+            if not day_date:
+                continue
 
-        for schedule_game in schedule_games:
-            game_id = safe_get(schedule_game, "gamePk")
-            score_game = score_games.get(game_id)
-            record = parse_game(schedule_game, score_game, source_date=current_date, ingested_at=ingested_at)
-            extracted_records.append(record)
+            # Parse day_date to ensure it's within our range
+            try:
+                day_dt = datetime.fromisoformat(day_date).date()
+            except (ValueError, TypeError):
+                continue
+
+            if day_dt < start_dt or day_dt > end_dt:
+                continue
+
+            for game in day_block.get("games", []):
+                parsed = parse_game_from_schedule(game, day_date, ingested_at)
+                if parsed:
+                    extracted_records.append(parsed)
+                    game_count_today += 1
+
+        if game_count_today == 0:
+            print(f"  No games found for {current_date_str}")
+        else:
+            print(f"  Found {game_count_today} games for {current_date_str}")
+
+        time.sleep(sleep_sec)
+        current_dt += timedelta(days=1)
 
     local_filename = f"nhl_games_{start_date}_{end_date}.jsonl"
     output_path = str(Path(output_dir) / local_filename)
