@@ -1,6 +1,6 @@
 # Architecture
 
-This batch pipeline extracts NHL game data from the public NHL API, stores raw data in Google Cloud Storage, loads it into BigQuery, and transforms it into analytics-ready tables.
+This batch pipeline extracts NHL game data from the public NHL API, stores raw data in Google Cloud Storage, loads it into BigQuery, and transforms it into analytics-ready tables. It also includes an upcoming game forecast process and a simple React UI.
 
 ## Data Flow
 
@@ -13,6 +13,12 @@ Google Cloud Storage raw JSONL files
 BigQuery raw table
   ↓
 BigQuery analytics table
+  ↓
+BigQuery team stats table
+  ↓
+Forecast JSON file
+  ↓
+React frontend UI
   ↓
 Looker Studio dashboard
 

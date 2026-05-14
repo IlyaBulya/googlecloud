@@ -88,7 +88,7 @@ cp config.example.env .env
 ## Run the Pipeline Locally
 
 ```bash
-python src/run_pipeline.py
+python3 src/run_pipeline.py
 ```
 
 This script will:
@@ -102,7 +102,7 @@ This script will:
 Before running the full pipeline, test the NHL API data extraction locally:
 
 ```bash
-python test_extraction.py --date 2025-10-07
+python3 test_extraction.py --date 2025-10-07
 ```
 
 This will show you:
@@ -120,6 +120,45 @@ Use the SQL files in the `sql/` directory to create the raw and analytics tables
 bq query --use_legacy_sql=false < sql/01_create_raw_table.sql
 bq query --use_legacy_sql=false < sql/02_create_analytics_table.sql
 ```
+
+## Create Team Stats
+
+Use the team stats SQL to generate a team-level summary table from the analytics dataset.
+
+```bash
+bq query --use_legacy_sql=false < sql/04_create_team_stats.sql
+```
+
+## Generate Forecast
+
+After the historical pipeline and team stats table are ready, generate a minimal upcoming game forecast.
+
+```bash
+python3 src/run_forecast_pipeline.py
+```
+
+This script will:
+- Extract upcoming games for the configured `UPCOMING_DATE`
+- Save upcoming games as JSONL locally
+- Read team stats from BigQuery
+- Generate a simple forecast JSON file for the frontend
+
+## Run the Frontend UI
+
+The repository includes a lightweight Vite + React UI that reads the generated forecast JSON from `frontend/public/data/forecast.json`.
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The UI shows:
+- Games analyzed
+- Teams analyzed
+- Upcoming games
+- Average goals per game
+- Predicted winner and confidence for each matchup
 
 ## Dashboard
 

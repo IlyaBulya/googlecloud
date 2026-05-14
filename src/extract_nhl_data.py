@@ -4,7 +4,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-import pandas as pd
 import requests
 
 from src.utils import ensure_directory, safe_get
@@ -51,6 +50,15 @@ def extract_team_name(team: dict) -> Optional[str]:
     return place_name
 
 
+def normalize_score(value):
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def parse_game_from_score(game: dict, ingested_at: str) -> Optional[dict]:
     """Parse a single game from /score/{date} response."""
     game_id = game.get("id")
@@ -60,24 +68,13 @@ def parse_game_from_score(game: dict, ingested_at: str) -> Optional[dict]:
     home_team = game.get("homeTeam", {})
     away_team = game.get("awayTeam", {})
 
-    home_score = home_team.get("score")
-    away_score = away_team.get("score")
-    
-    # Ensure scores are int or None, not string
-    if home_score is not None:
-        try:
-            home_score = int(home_score)
-        except (ValueError, TypeError):
-            home_score = None
-    
-    if away_score is not None:
-        try:
-            away_score = int(away_score)
-        except (ValueError, TypeError):
-            away_score = None
+    home_score = normalize_score(home_team.get("score"))
+    away_score = normalize_score(away_team.get("score"))
 
-    # Parse game_date from gameDate field
-    game_date = game.get("gameDate", "").split("T")[0]  # Take date part only
+    # Parse game_date from gameDate field or use source date if absent
+    game_date = game.get("gameDate", "")
+    if isinstance(game_date, str) and "T" in game_date:
+        game_date = game_date.split("T")[0]
 
     return {
         "game_id": int(game_id),
@@ -206,11 +203,12 @@ def extract_nhl_data(start_date: str, end_date: str, output_dir: str = "data/raw
     output_path = str(Path(output_dir) / local_filename)
 
     if records_list:
-        df = pd.DataFrame(records_list)
-        df.to_json(output_path, orient="records", lines=True, date_format="iso")
+        with open(output_path, "w", encoding="utf-8") as writer:
+            for record in records_list:
+                writer.write(json.dumps(record, ensure_ascii=False) + "\n")
     else:
         print("\nNo records extracted. Writing an empty JSONL file.")
-        Path(output_path).write_text("")
+        Path(output_path).write_text("", encoding="utf-8")
 
     print(f"\nExtraction complete: {len(records_list)} unique games to {output_path}")
     return output_path, len(records_list)
