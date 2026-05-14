@@ -1,73 +1,137 @@
-# NHL API Extraction Fix Summary
+# NHL API Extraction Fixes
 
-## Problem
+## Fix #1: Correct gameWeek Structure (Initial Fix)
+
+### Problem
 The pipeline was returning **0 results** when extracting NHL game data.
 
-## Root Cause
-The NHL API response structure uses a `gameWeek` array, but the extraction code was looking for a `dates` array. Additionally, field names were incorrect:
+### Root Cause
+The NHL API response structure uses a `gameWeek` array, but the extraction code was looking for a `dates` array. Additionally, field names were incorrect.
 
-**What the code expected:**
-- `/schedule/{date}` response with `dates` array
-- Game ID field: `gamePk`
-- Start time field: `startTime`
+### Solution
+Updated parsing to use `gameWeek` array and correct field names (id, startTimeUTC, etc).
 
-**What the actual API returns:**
-- `/schedule/{date}` response with `gameWeek` array
-- Game ID field: `id`
-- Start time field: `startTimeUTC`
-- Team data under `homeTeam` and `awayTeam` (not nested under `teams`)
+### Results
+- Before: 0 games extracted
+- After: 50 games extracted over 3 days (Jan 10-12, 2025)
 
-## Solution
-Updated `src/extract_nhl_data.py` to:
+---
 
-1. **Parse correct response structure:**
-   ```python
-   for day_block in schedule_response.get("gameWeek", []):
-       for game in day_block.get("games", []):
-           # Parse each game
-   ```
+## Fix #2: Extract Completed Scores from /score Endpoint (Current Fix)
 
-2. **Use correct field names:**
-   - `game.get("id")` instead of `game.get("gamePk")`
-   - `game.get("startTimeUTC")` instead of `game.get("startTime")`
-   - `home_team.get("abbrev")` from `game.get("homeTeam", {})`
-
-3. **Add robustness:**
-   - Exponential backoff retry logic (3 retries by default)
-   - Proper error handling for transient API failures
-   - Date range validation within response parsing
-
-## Results
-- **Before:** 0 games extracted
-- **After:** 50 games extracted over 3 days (Jan 10-12, 2025)
-- Sample output shows all fields correctly populated:
-  ```json
-  {
-    "game_id": 2024020664,
-    "game_date": "2025-01-10",
-    "season": 20242025,
-    "venue": "Little Caesars Arena",
-    "home_team_abbrev": "DET",
-    "away_team_abbrev": "CHI",
-    "start_time_utc": "2025-01-11T00:00:00Z",
-    ...
-  }
-  ```
-
-## Testing
-Use the included test script to verify extraction locally:
-```bash
-python test_extraction.py --date 2025-01-15
+### Problem
+The pipeline was returning **NULL scores** in BigQuery:
+```
+home_score = NULL
+away_score = NULL  
+total_goals = NULL
+winner_location = TIE/UNKNOWN
 ```
 
-This shows:
-- Number of games returned
-- Sample game structure (debugging gameWeek vs dates issue)
-- Whether the API is responding correctly
+### Root Cause
+The extraction code was using `/schedule/{date}` as primary source, which returns scheduled games WITHOUT scores. The `/score/{date}` endpoint contains actual completed game scores but was never called.
 
-## Key Lesson
-When working with external APIs, always validate:
-1. Response structure (array names, nesting)
-2. Field names and types
-3. Use HTTP client libraries with retry logic for resilience
-4. Add diagnostic logging to identify parsing issues quickly
+### Solution
+Updated `src/extract_nhl_data.py` to:
+
+1. **Primary source:** `/score/{date}` endpoint
+   - Contains homeTeam.score and awayTeam.score
+   - Returns only games with final results
+   - Endpoint: `https://api-web.nhle.com/v1/score/{YYYY-MM-DD}`
+
+2. **Fallback:** `/schedule/{date}` if score endpoint has no games
+   - Supports both top-level `games` and `gameWeek[].games` structures
+   - Used for upcoming/scheduled games only
+
+3. **Correct field mappings:**
+   - Scores: `homeTeam.score`, `awayTeam.score` (numeric)
+   - Team names: `commonName.default` or `placeName.default`
+   - Game date: parse from `gameDate` field
+
+4. **Deduplication:** Store records in dict by game_id to eliminate duplicate rows
+
+5. **Detailed logging:** Print HTTP status, game count per date
+
+### Results
+- **Before:**  
+  - 50 games extracted
+  - 0% score coverage (all NULL)
+  - Mixed scheduled and completed games
+  
+- **After:**  
+  - 25 games extracted (correct unique count)
+  - 100% score coverage (all games have scores)
+  - Scores verified: DET 5 vs CHI 3, WSH 2 vs MTL 3, CAR 2 vs VAN 0, etc.
+
+### API Response Structure (/score/{date})
+
+```json
+{
+  "games": [
+    {
+      "id": 2024020664,
+      "gameDate": "2025-01-10T00:00:00Z",
+      "startTimeUTC": "2025-01-11T00:00:00Z",
+      "gameState": "OFF",
+      "season": 20242025,
+      "gameType": 2,
+      "venue": {"default": "Little Caesars Arena"},
+      "homeTeam": {
+        "abbrev": "DET",
+        "score": 5,
+        "commonName": {"default": "Detroit"},
+        "placeName": {"default": "Detroit"}
+      },
+      "awayTeam": {
+        "abbrev": "CHI",
+        "score": 3,
+        "commonName": {"default": "Chicago"},
+        "placeName": {"default": "Chicago"}
+      }
+    }
+  ]
+}
+```
+
+## Testing
+
+### Before (0 scores):
+```bash
+$ python test_score_extraction.py
+Total games: 50
+Games with scores: 0
+Games without scores: 50
+Score coverage: 0.0%
+```
+
+### After (100% scores):
+```bash
+$ python test_score_extraction.py
+Total games: 25
+Games with scores: 25
+Games without scores: 0
+Score coverage: 100.0%
+```
+
+## Impact on Downstream
+
+### SQL Analytics (`sql/02_create_analytics_table.sql`)
+Now returns correct values:
+- `total_goals = home_score + away_score` (not NULL)
+- `winner_team_abbrev = home_team_abbrev OR away_team_abbrev` (not NULL)
+- `winner_location = 'HOME', 'AWAY', or 'TIE'` (not 'UNKNOWN')
+
+### Looker Studio Dashboard
+Can now display:
+- Actual goals per game
+- Win/loss statistics
+- Team performance metrics
+- Completed vs scheduled games
+
+## Key Lessons
+
+1. **Always check multiple API endpoints:** Different endpoints serve different purposes (schedule vs scores)
+2. **Verify response structure:** Document field names and nesting before coding
+3. **Deduplicate properly:** Use dict for game_id when combining multiple data sources
+4. **Add diagnostic logging:** Print status + counts per request for debugging
+5. **100% score coverage is achievable:** Use the right endpoint as primary source

@@ -149,11 +149,17 @@ Looker Studio dashboard link: ADD_LINK_HERE
 
 ## Troubleshooting
 
+**Q: Scores are NULL in BigQuery**  
+A: The pipeline now extracts scores from the `/score/{date}` endpoint. If you have old data without scores, re-run the pipeline for that date range. The /score endpoint contains actual game results with homeTeam.score and awayTeam.score populated.
+
 **Q: Pipeline extracts 0 games**  
-A: The NHL API response structure uses `gameWeek` array with nested `games`. Ensure the pipeline is parsing the correct response format. The extraction code includes retry logic with exponential backoff for transient API failures.
+A: The extraction uses `/score/{date}` as primary (for completed games) and falls back to `/schedule/{date}` if no games are found. Ensure at least one of these endpoints is returning data for your date range.
+
+**Q: Different game counts than expected**  
+A: The pipeline deduplicates by game_id internally. You should see one row per game per date. If extraction seems low, the date range may fall during off-season (typically April-July) when few games are scheduled.
 
 **Q: HTTP timeouts or 429 rate limit errors**  
-A: The `extract_nhl_data.py` includes exponential backoff retry logic (default 3 retries). Adjust `--http-timeout` and `--http-backoff` parameters or add sleep between requests via the `sleep_sec` parameter.
+A: The extraction includes exponential backoff retry logic (default 3 retries). If errors persist, check NHL API availability or add sleep between requests via the `sleep_sec` parameter.
 
 ## Submission
 
