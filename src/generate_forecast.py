@@ -73,17 +73,62 @@ def compute_forecast_strength(team_stats: dict[str, Any], league_avg_goals: floa
     return 0.60 * win_rate + 0.25 * home_win_rate + 0.15 * normalized_goals + bonus
 
 
+def aggregate_team_stats(team_stats: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    total_games_played = sum(stats.get("games_played", 0) for stats in team_stats.values())
+    total_goals_for = sum(safe_float(stats.get("goals_for")) for stats in team_stats.values())
+    total_home_games = sum(stats.get("home_games", 0) for stats in team_stats.values())
+    total_home_wins = sum(stats.get("home_wins", 0) for stats in team_stats.values())
+    total_away_games = sum(stats.get("away_games", 0) for stats in team_stats.values())
+    total_away_wins = sum(stats.get("away_wins", 0) for stats in team_stats.values())
+
+    games_analyzed = total_games_played / 2 if total_games_played else 0
+    total_goals_analyzed = total_goals_for
+    avg_goals_per_game = total_goals_analyzed / games_analyzed if games_analyzed else 0
+    home_win_rate = total_home_wins / total_home_games if total_home_games else 0
+    away_win_rate = total_away_wins / total_away_games if total_away_games else 0
+
+    best_team = None
+    best_win_rate = 0.0
+    highest_scoring_team = None
+    highest_scoring_team_avg_goals = 0.0
+
+    for abbrev, stats in team_stats.items():
+        win_rate = safe_float(stats.get("win_rate"), 0.0)
+        avg_goals = safe_float(stats.get("avg_goals_for"), 0.0)
+        if win_rate > best_win_rate or best_team is None:
+            best_team = abbrev
+            best_win_rate = win_rate
+        if avg_goals > highest_scoring_team_avg_goals or highest_scoring_team is None:
+            highest_scoring_team = abbrev
+            highest_scoring_team_avg_goals = avg_goals
+
+    return {
+        "games_analyzed": round(games_analyzed, 0) if games_analyzed.is_integer() else round(games_analyzed, 1),
+        "teams_analyzed": len(team_stats),
+        "upcoming_games": 0,
+        "avg_goals_per_game": round(avg_goals_per_game, 2),
+        "total_goals_analyzed": round(total_goals_analyzed, 0),
+        "home_win_rate": round(home_win_rate, 2),
+        "away_win_rate": round(away_win_rate, 2),
+        "best_team_by_win_rate": best_team or "N/A",
+        "best_team_win_rate": round(best_win_rate, 2),
+        "highest_scoring_team": highest_scoring_team or "N/A",
+        "highest_scoring_team_avg_goals": round(highest_scoring_team_avg_goals, 2),
+    }
+
+
 def generate_forecast(config: Config, upcoming_games_path: str) -> str:
     team_stats = load_team_stats(config)
     upcoming_games = read_upcoming_games(upcoming_games_path)
 
     total_goals = 0.0
-    total_games = 0
+    total_team_games = 0
     for stats in team_stats.values():
         total_goals += safe_float(stats.get("goals_for"))
-        total_games += stats.get("games_played", 0)
+        total_team_games += stats.get("games_played", 0)
 
-    league_avg_goals = total_goals / total_games if total_games else 1.0
+    league_avg_goals = total_goals / total_team_games if total_team_games else 1.0
+    analytics = aggregate_team_stats(team_stats)
 
     forecasts = []
     for game in upcoming_games:
@@ -115,8 +160,16 @@ def generate_forecast(config: Config, upcoming_games_path: str) -> str:
             "home_probability": round(home_probability, 2),
             "away_probability": round(away_probability, 2),
             "confidence": round(confidence, 2),
-            "home_win_rate": round(safe_float(home_stats.get("home_win_rate"), 0.5), 2),
-            "away_win_rate": round(safe_float(away_stats.get("away_win_rate"), 0.5), 2),
+            "home_games_played": home_stats.get("games_played", 0),
+            "away_games_played": away_stats.get("games_played", 0),
+            "home_avg_goals_for": round(safe_float(home_stats.get("avg_goals_for"), 0.0), 2),
+            "away_avg_goals_for": round(safe_float(away_stats.get("avg_goals_for"), 0.0), 2),
+            "home_avg_goals_against": round(safe_float(home_stats.get("avg_goals_against"), 0.0), 2),
+            "away_avg_goals_against": round(safe_float(away_stats.get("avg_goals_against"), 0.0), 2),
+            "home_overall_win_rate": round(safe_float(home_stats.get("win_rate"), 0.5), 2),
+            "away_overall_win_rate": round(safe_float(away_stats.get("win_rate"), 0.5), 2),
+            "home_home_win_rate": round(safe_float(home_stats.get("home_win_rate"), 0.5), 2),
+            "away_away_win_rate": round(safe_float(away_stats.get("away_win_rate"), 0.5), 2),
         })
 
     output_dir = Path(config.forecast_output_dir or "frontend/public/data")
@@ -131,10 +184,8 @@ def generate_forecast(config: Config, upcoming_games_path: str) -> str:
         },
         "upcoming_date": config.upcoming_date,
         "summary": {
-            "games_analyzed": len(upcoming_games),
-            "teams_analyzed": len(team_stats),
+            **analytics,
             "upcoming_games": len(upcoming_games),
-            "avg_goals_per_game": round(league_avg_goals, 2),
         },
         "games": forecasts,
     }

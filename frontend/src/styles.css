@@ -10,7 +10,7 @@ body {
 }
 
 .page-shell {
-  max-width: 980px;
+  max-width: 1020px;
   margin: 0 auto;
   padding: 24px;
 }
@@ -61,34 +61,112 @@ h1 {
 
 .games-list {
   display: grid;
-  gap: 16px;
+  gap: 18px;
 }
 
 .game-card {
-  padding: 18px;
+  padding: 20px;
 }
 
-.game-header,
-.game-footer {
+.game-header {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 18px;
 }
 
-.game-body {
-  margin: 16px 0;
-  display: grid;
-  gap: 8px;
+.game-title {
+  font-size: 1.1rem;
 }
 
 .game-time {
+  color: #475569;
+  font-size: 0.95rem;
+}
+
+.game-summary {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  margin-bottom: 16px;
+}
+
+.small-label {
   color: #64748b;
+  font-size: 0.9rem;
+  margin-bottom: 6px;
+}
+
+.value-text {
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.probability-bar {
+  display: flex;
+  height: 26px;
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 18px;
+  border: 1px solid #e2e8f0;
+}
+
+.probability-segment {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.probability-segment.home {
+  background: #2563eb;
+}
+
+.probability-segment.away {
+  background: #ef4444;
+}
+
+.team-metrics-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.team-column {
+  background: #f8fafc;
+  border-radius: 14px;
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+}
+
+.team-column-title {
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+.stat-block {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.stat-title {
+  color: #475569;
+  font-size: 0.9rem;
+}
+
+.stat-value {
+  font-weight: 700;
 }
 
 .footer-text {
   margin-top: 32px;
-  color: #64748b;
+  color: #475569;
 }
 
 .error {
