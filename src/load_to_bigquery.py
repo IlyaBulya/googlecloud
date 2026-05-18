@@ -35,7 +35,7 @@ def load_jsonl_to_bigquery(
         SchemaField("home_score", "INTEGER"),
         SchemaField("away_score", "INTEGER"),
         SchemaField("game_state", "STRING"),
-        SchemaField("start_time_utc", "STRING"),
+        SchemaField("start_time_utc", "TIMESTAMP"),
         SchemaField("source_date", "DATE"),
         SchemaField("ingested_at", "TIMESTAMP"),
     ]
