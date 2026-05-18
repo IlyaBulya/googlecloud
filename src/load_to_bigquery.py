@@ -25,8 +25,8 @@ def load_jsonl_to_bigquery(
     schema = [
         SchemaField("game_id", "INTEGER"),
         SchemaField("game_date", "DATE"),
-        SchemaField("season", "STRING"),
-        SchemaField("game_type", "STRING"),
+        SchemaField("season", "INTEGER"),
+        SchemaField("game_type", "INTEGER"),
         SchemaField("venue", "STRING"),
         SchemaField("home_team_abbrev", "STRING"),
         SchemaField("away_team_abbrev", "STRING"),
